@@ -1,0 +1,19 @@
+﻿name: scanner_code_example
+description: Windows playground for flutter_scanner_code.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_scanner_code:
+    path: ../
+
+dev_dependencies:
+  very_good_analysis: ^10.3.0
+
+flutter:
+  uses-material-design: true
