@@ -21,17 +21,21 @@ class _KeyboardCapturePage extends StatefulWidget {
 class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
   final ScannerCodeService _service = initScannerCodeService();
   final _events = <ScannerCodeKeyEvent>[];
+  final _barcodes = <ScannerCodeBarcode>[];
   List<ScannerCodeDevice> _devices = const [];
   StreamSubscription<ScannerCodeKeyEvent>? _subscription;
+  StreamSubscription<ScannerCodeBarcode>? _barcodeSubscription;
   String? _selectedDeviceId;
   bool _capturing = false;
   bool _busy = false;
   String? _error;
+  String? _policyMessage;
 
   @override
   void initState() {
     super.initState();
     _subscription = _service.keyEvents.listen(_onKeyPressed);
+    _barcodeSubscription = _service.barcodeEvents.listen(_onBarcode);
     unawaited(_startCapture());
   }
 
@@ -54,10 +58,52 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
     });
   }
 
+  void _onBarcode(ScannerCodeBarcode barcode) {
+    if (!mounted) return;
+    setState(() {
+      _barcodes.insert(0, barcode);
+      if (_barcodes.length > 100) _barcodes.removeLast();
+    });
+  }
+
   Future<void> _startCapture() => _runCapture(() async {
+    final previouslySelectedDeviceId = _selectedDeviceId;
     await _service.start();
     _capturing = true;
     _updateDevices(await _service.listDevices());
+    if (previouslySelectedDeviceId != null && _selectedDeviceId == null) {
+      final result = await _service.configureInputPolicy(
+        const ScannerInputPolicy(),
+      );
+      _policyMessage = result.message;
+    }
+  });
+
+  Future<void> _selectDevice(String? deviceId) => _runCapture(() async {
+    final previousDeviceId = _selectedDeviceId;
+    setState(() {
+      _selectedDeviceId = deviceId;
+      _policyMessage = null;
+    });
+    final result = await _service.configureInputPolicy(
+      ScannerInputPolicy(suppressedDeviceId: deviceId),
+    );
+    if (!mounted) return;
+    if (result.isApplied) {
+      setState(() => _policyMessage = result.message);
+    } else {
+      setState(() {
+        _selectedDeviceId = previousDeviceId;
+        _error = result.message ?? 'No se pudo aplicar el filtro.';
+      });
+    }
+  });
+
+  Future<void> _allowSelectedDevice() => _runCapture(() async {
+    final result = await _service.configureInputPolicy(
+      const ScannerInputPolicy(),
+    );
+    if (mounted) setState(() => _policyMessage = result.message);
   });
 
   Future<void> _stopCapture() => _runCapture(() async {
@@ -66,7 +112,14 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
   });
 
   Future<void> _refreshDevices() => _runCapture(() async {
+    final previouslySelectedDeviceId = _selectedDeviceId;
     _updateDevices(await _service.listDevices());
+    if (previouslySelectedDeviceId != null && _selectedDeviceId == null) {
+      final result = await _service.configureInputPolicy(
+        const ScannerInputPolicy(),
+      );
+      _policyMessage = result.message;
+    }
   });
 
   void _updateDevices(List<ScannerCodeDevice> devices) {
@@ -93,6 +146,7 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
   @override
   void dispose() {
     unawaited(_subscription?.cancel());
+    unawaited(_barcodeSubscription?.cancel());
     unawaited(_service.dispose());
     super.dispose();
   }
@@ -106,6 +160,15 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
         .toList(growable: false);
   }
 
+  List<ScannerCodeBarcode> get _visibleBarcodes {
+    final selectedDeviceId = _selectedDeviceId;
+    if (selectedDeviceId == null) return const [];
+
+    return _barcodes
+        .where((barcode) => barcode.deviceId == selectedDeviceId)
+        .toList(growable: false);
+  }
+
   ScannerCodeDevice? get _selectedDevice {
     for (final device in _devices) {
       if (device.deviceId == _selectedDeviceId) return device;
@@ -116,6 +179,7 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
   @override
   Widget build(BuildContext context) {
     final visibleEvents = _visibleEvents;
+    final visibleBarcodes = _visibleBarcodes;
     final selectedDevice = _selectedDevice;
     final selectedDeviceName = selectedDevice == null
         ? 'este dispositivo'
@@ -139,7 +203,9 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
               decoration: InputDecoration(
                 border: OutlineInputBorder(),
                 labelText: 'Prueba de escritura normal',
-                helperText: 'La tecla también debe escribirse en este campo.',
+                helperText:
+                    'La escritura del teclado seleccionado se filtra; los '
+                    'demás teclados siguen escribiendo.',
               ),
             ),
             const SizedBox(height: 16),
@@ -166,12 +232,18 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
                 ),
                 const Spacer(),
                 TextButton.icon(
-                  onPressed: visibleEvents.isEmpty
+                  onPressed: visibleEvents.isEmpty && visibleBarcodes.isEmpty
                       ? null
                       : () => setState(
-                          () => _events.removeWhere(
-                            (event) => event.deviceId == _selectedDeviceId,
-                          ),
+                          () {
+                            _events.removeWhere(
+                              (event) => event.deviceId == _selectedDeviceId,
+                            );
+                            _barcodes.removeWhere(
+                              (barcode) =>
+                                  barcode.deviceId == _selectedDeviceId,
+                            );
+                          },
                         ),
                   icon: const Icon(Icons.delete_outline),
                   label: const Text('Limpiar'),
@@ -191,10 +263,11 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
             InputDecorator(
               decoration: InputDecoration(
                 border: const OutlineInputBorder(),
-                labelText: 'Teclados detectados (${_devices.length})',
+                labelText:
+                    'Teclado seleccionado (${_devices.length} detectados)',
                 helperText:
-                    'USB o Bluetooth en modo teclado. La etiqueta identifica '
-                    'el dispositivo que envió la última tecla.',
+                    'El teclado seleccionado se filtra mientras la captura '
+                    'esta activa. Los demas siguen funcionando.',
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
@@ -253,15 +326,30 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
                         ),
                       )
                       .toList(),
-                  onChanged: _busy || _devices.isEmpty
-                      ? null
-                      : (deviceId) => setState(
-                          () => _selectedDeviceId = deviceId,
-                        ),
+                  onChanged: _busy || _devices.isEmpty ? null : _selectDevice,
                 ),
               ),
             ),
+            if (_policyMessage case final message?)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(message),
+              ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _busy || !_capturing || _selectedDeviceId == null
+                    ? null
+                    : _allowSelectedDevice,
+                icon: const Icon(Icons.lock_open_outlined),
+                label: const Text('Permitir teclado seleccionado'),
+              ),
+            ),
             const SizedBox(height: 12),
+            Text('Códigos completos: ${visibleBarcodes.length}'),
+            if (visibleBarcodes.isNotEmpty)
+              SelectableText('Último código: ${visibleBarcodes.first.code}'),
+            const SizedBox(height: 8),
             Text('Teclas capturadas del dispositivo: ${visibleEvents.length}'),
             const SizedBox(height: 8),
             Expanded(

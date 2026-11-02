@@ -1,0 +1,9 @@
+{
+  "dart.flutterSdkPath": ".fvm/versions/3.44.0",
+  "cmake.sourceDirectory": "D:/projects_flutter/flutter_scanner_code/windows",
+  "[dart]": {
+    "editor.defaultFormatter": "Dart-Code.dart-code",
+    "editor.formatOnSave": true,
+    "editor.rulers": [80]
+  }
+}

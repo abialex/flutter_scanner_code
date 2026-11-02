@@ -1,0 +1,7 @@
+.dart_tool/
+.fvm/
+build/
+example/build/
+example/.flutter-plugins-dependencies
+example/windows/flutter/ephemeral/
+.flutter-plugins-dependencies
