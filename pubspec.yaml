@@ -1,6 +1,6 @@
 name: flutter_scanner_code
 description: Windows keyboard input capture and device listing for Flutter.
-version: 0.1.0
+version: 0.1.1
 publish_to: none
 
 environment:

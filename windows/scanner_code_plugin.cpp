@@ -485,21 +485,6 @@ class ScannerCodePlugin : public flutter::Plugin, public ScannerCodeHostApi {
            std::to_string(key.Flags & (RI_KEY_E0 | RI_KEY_E1));
   }
 
-  static LPARAM KeyboardMessageLParam(const RAWKEYBOARD& key,
-                                      bool was_down) {
-    const bool key_up = (key.Flags & RI_KEY_BREAK) != 0;
-    std::uint32_t value = 1;
-    value |= static_cast<std::uint32_t>(key.MakeCode) << 16;
-    if ((key.Flags & RI_KEY_E0) != 0) value |= 1u << 24;
-    if ((key.Message == WM_SYSKEYDOWN || key.Message == WM_SYSKEYUP) &&
-        (GetKeyState(VK_MENU) & 0x8000) != 0) {
-      value |= 1u << 29;
-    }
-    if (was_down || key_up) value |= 1u << 30;
-    if (key_up) value |= 1u << 31;
-    return static_cast<LPARAM>(value);
-  }
-
   void ForwardKeyboardInput(const DeviceIdentity& identity,
                             const RAWKEYBOARD& key) {
     if (suppressed_device_path_.empty() ||
@@ -531,15 +516,22 @@ class ScannerCodePlugin : public flutter::Plugin, public ScannerCodeHostApi {
       forwarded_keys_.insert(key_id);
     }
 
-    // Replay into Flutter's focused view. The Raw Input handler uses the
-    // top-level window, but text fields receive keyboard messages on focus.
-    HWND focused_window = GetFocus();
-    if (focused_window == nullptr ||
-        GetAncestor(focused_window, GA_ROOT) != target_window_) {
-      focused_window = target_window_;
+    // Inject into the Windows keyboard stream so the key state queried by
+    // Flutter matches the forwarded event, especially for Ctrl and Alt.
+    INPUT input{};
+    input.type = INPUT_KEYBOARD;
+    input.ki.wVk = 0;
+    input.ki.wScan = key.MakeCode;
+    input.ki.dwFlags = KEYEVENTF_SCANCODE;
+    if ((key.Flags & RI_KEY_E0) != 0) {
+      input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
     }
-    PostMessageW(focused_window, key.Message, key.VKey,
-                 KeyboardMessageLParam(key, was_down));
+    if (key_up) input.ki.dwFlags |= KEYEVENTF_KEYUP;
+    if (key.MakeCode == 0) {
+      input.ki.wVk = key.VKey;
+      input.ki.dwFlags &= ~KEYEVENTF_SCANCODE;
+    }
+    SendInput(1, &input, sizeof(INPUT));
   }
 
   void ProcessBarcodeInput(const DeviceIdentity& identity,

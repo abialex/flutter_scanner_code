@@ -2,6 +2,13 @@
 
 Los cambios importantes del paquete se documentan aquí.
 
+## [0.1.1] - 2026-11-02
+
+### Corregido
+
+- Reenvío del teclado con `SendInput` para mantener sincronizado el estado de
+  las teclas modificadoras Alt y Ctrl en Windows.
+
 ## [0.1.0] - 2026-11-01
 
 ### Agregado
