@@ -2,6 +2,17 @@
 
 Los cambios importantes del paquete se documentan aquí.
 
+## [0.2.0] - 2026-11-02
+
+### Agregado
+
+- `ScannerKeyboardInputBlocker` para bloquear en Flutter las teclas del dispositivo seleccionado.
+- Ejemplo de uso del blocker junto al servicio de captura.
+
+### Cambiado
+
+- Windows mantiene habilitada la escritura normal y usa el dispositivo seleccionado como origen de códigos de barras.
+
 ## [0.1.1] - 2026-11-02
 
 ### Corregido

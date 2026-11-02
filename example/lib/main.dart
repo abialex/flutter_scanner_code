@@ -22,6 +22,8 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
   final ScannerCodeService _service = initScannerCodeService();
   final _events = <ScannerCodeKeyEvent>[];
   final _barcodes = <ScannerCodeBarcode>[];
+  late final ScannerKeyboardInputBlocker _keyboardInputBlocker =
+      ScannerKeyboardInputBlocker(service: _service);
   List<ScannerCodeDevice> _devices = const [];
   StreamSubscription<ScannerCodeKeyEvent>? _subscription;
   StreamSubscription<ScannerCodeBarcode>? _barcodeSubscription;
@@ -68,7 +70,13 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
 
   Future<void> _startCapture() => _runCapture(() async {
     final previouslySelectedDeviceId = _selectedDeviceId;
-    await _service.start();
+    _keyboardInputBlocker.start();
+    try {
+      await _service.start();
+    } on Object {
+      await _keyboardInputBlocker.stop();
+      rethrow;
+    }
     _capturing = true;
     _updateDevices(await _service.listDevices());
     if (previouslySelectedDeviceId != null && _selectedDeviceId == null) {
@@ -81,6 +89,7 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
 
   Future<void> _selectDevice(String? deviceId) => _runCapture(() async {
     final previousDeviceId = _selectedDeviceId;
+    _keyboardInputBlocker.setBlockedDeviceId(deviceId);
     setState(() {
       _selectedDeviceId = deviceId;
       _policyMessage = null;
@@ -92,21 +101,28 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
     if (result.isApplied) {
       setState(() => _policyMessage = result.message);
     } else {
+      _keyboardInputBlocker.setBlockedDeviceId(previousDeviceId);
       setState(() {
         _selectedDeviceId = previousDeviceId;
-        _error = result.message ?? 'No se pudo aplicar el filtro.';
+        _error = result.message ?? 'No se pudo seleccionar el lector.';
       });
     }
   });
 
-  Future<void> _allowSelectedDevice() => _runCapture(() async {
+  Future<void> _clearSelectedDevice() => _runCapture(() async {
     final result = await _service.configureInputPolicy(
       const ScannerInputPolicy(),
     );
-    if (mounted) setState(() => _policyMessage = result.message);
+    if (!mounted) return;
+    _keyboardInputBlocker.setBlockedDeviceId(null);
+    setState(() {
+      _selectedDeviceId = null;
+      _policyMessage = result.message;
+    });
   });
 
   Future<void> _stopCapture() => _runCapture(() async {
+    await _keyboardInputBlocker.stop();
     await _service.stop();
     _capturing = false;
   });
@@ -126,6 +142,7 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
     _devices = devices;
     if (!_devices.any((device) => device.deviceId == _selectedDeviceId)) {
       _selectedDeviceId = null;
+      _keyboardInputBlocker.setBlockedDeviceId(null);
     }
   }
 
@@ -145,6 +162,7 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
 
   @override
   void dispose() {
+    unawaited(_keyboardInputBlocker.dispose());
     unawaited(_subscription?.cancel());
     unawaited(_barcodeSubscription?.cancel());
     unawaited(_service.dispose());
@@ -204,8 +222,8 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
                 border: OutlineInputBorder(),
                 labelText: 'Prueba de escritura normal',
                 helperText:
-                    'La escritura del teclado seleccionado se filtra; los '
-                    'demás teclados siguen escribiendo.',
+                    'Las teclas del dispositivo seleccionado se bloquean '
+                    'en Flutter. Las de los demás teclados pasan.',
               ),
             ),
             const SizedBox(height: 16),
@@ -263,11 +281,10 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
             InputDecorator(
               decoration: InputDecoration(
                 border: const OutlineInputBorder(),
-                labelText:
-                    'Teclado seleccionado (${_devices.length} detectados)',
+                labelText: 'Lector de códigos (${_devices.length} detectados)',
                 helperText:
-                    'El teclado seleccionado se filtra mientras la captura '
-                    'esta activa. Los demas siguen funcionando.',
+                    'El dispositivo seleccionado aporta los códigos de '
+                    'barras; la escritura normal sigue activa.',
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
@@ -340,9 +357,9 @@ class _KeyboardCapturePageState extends State<_KeyboardCapturePage> {
               child: TextButton.icon(
                 onPressed: _busy || !_capturing || _selectedDeviceId == null
                     ? null
-                    : _allowSelectedDevice,
-                icon: const Icon(Icons.lock_open_outlined),
-                label: const Text('Permitir teclado seleccionado'),
+                    : _clearSelectedDevice,
+                icon: const Icon(Icons.remove_circle_outline),
+                label: const Text('Quitar lector seleccionado'),
               ),
             ),
             const SizedBox(height: 12),
