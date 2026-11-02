@@ -1,6 +1,8 @@
-# Changelog
+# Registro de cambios
 
-## [Unreleased]
+Los cambios importantes del paquete se documentan aquí.
+
+## [0.1.0] - 2026-11-01
 
 ### Agregado
 
