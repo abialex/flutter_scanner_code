@@ -24,7 +24,9 @@ abstract interface class ScannerCodeService {
   /// Refreshes the metadata used to add a source name to [keyEvents].
   Future<List<ScannerCodeDevice>> listDevices();
 
-  /// Applies the selected-device text input policy.
+  /// Selects the keyboard device used to assemble barcode events.
+  ///
+  /// Normal Flutter text input remains enabled.
   Future<ScannerInputPolicyResult> configureInputPolicy(
     ScannerInputPolicy policy,
   );

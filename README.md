@@ -39,7 +39,7 @@ await subscription.cancel();
 await service.dispose();
 ```
 
-`keyEvents` informa el código virtual, la identidad técnica y el nombre, transporte y fabricante del dispositivo cuando coincide con la lista más reciente. `start()` carga esa lista si todavía no se consultó; llama a `listDevices()` para actualizarla después de conectar otro teclado. De forma predeterminada, la captura deja pasar la escritura normal. Al elegir un dispositivo con `configureInputPolicy`, Windows suprime su escritura dentro de esta aplicación y conserva la de los demás teclados.
+`keyEvents` informa el código virtual, la identidad técnica y el nombre, transporte y fabricante del dispositivo cuando coincide con la lista más reciente. `start()` carga esa lista si todavía no se consultó; llama a `listDevices()` para actualizarla después de conectar otro teclado. La captura Raw Input observa teclas por dispositivo, mientras la escritura normal permanece habilitada para todos los teclados. El ejemplo también registra los `KeyEvent` que llegan a Flutter.
 
 `barcodeEvents` emite el código completo cuando el dispositivo seleccionado termina la lectura con Enter. Cada evento incluye la identidad de origen; `deviceId` se deriva de sus atributos y permite comprobar que el código provino del teclado elegido.
 
@@ -53,7 +53,7 @@ final subscription = service.barcodeEvents.listen((barcode) {
 
 ### Política de entrada por dispositivo
 
-La API de dominio permite solicitar que se suprima la escritura normal de un dispositivo seleccionado:
+La API de dominio selecciona qué dispositivo Raw Input se procesa como lector de códigos de barras:
 
 ```dart
 import 'package:flutter/foundation.dart';
@@ -76,7 +76,46 @@ Future<void> configureSelectedDevice() async {
 }
 ```
 
-Un `suppressedDeviceId` nulo elimina la selección. Windows no permite desactivar los mensajes de teclado heredados para un único dispositivo HID. Por eso, mientras hay una selección, el plugin recibe Raw Input, omite las teclas de ese dispositivo y vuelve a enviar a la vista enfocada de esta aplicación las teclas de los demás. Así conserva la escritura del teclado restante. Al limpiar la selección, se restaura el flujo normal de teclado. La política se activa al iniciar la captura.
+Un `suppressedDeviceId` nulo elimina la selección. El nombre del argumento se conserva por compatibilidad, pero actualmente no bloquea la escritura: el plugin usa la selección para asociar los códigos completos al lector correcto. Flutter puede observar `KeyEvent`, aunque ese evento no incluye el ID físico del teclado.
+
+### Bloquear teclas del dispositivo seleccionado
+
+`ScannerKeyboardInputBlocker` conecta los eventos nativos del paquete con el handler global de Flutter. Pasa el `deviceId` elegido para consumir sus teclas; pasa `null` para dejar pasar todos los teclados. Esto filtra eventos dentro de Flutter, no desactiva el teclado en Windows.
+
+Usa una sola instancia activa por ventana. Inicia el blocker antes de la captura para que pueda asociar cada `KeyEvent` con su origen. En el `State` de la pantalla, donde ya tienes `service` y el ID seleccionado:
+
+```dart
+final blocker = ScannerKeyboardInputBlocker(service: service);
+
+void onDeviceSelected(ScannerCodeDevice? device) {
+  setState(() => selectedDeviceId = device?.deviceId);
+  blocker.setBlockedDeviceId(device?.deviceId);
+}
+
+Future<void> startCapture() async {
+  blocker.start();
+  try {
+    await service.start();
+  } on Object {
+    await blocker.stop();
+    rethrow;
+  }
+}
+
+Future<void> stopCapture() async {
+  await blocker.stop();
+  await service.stop();
+}
+
+@override
+void dispose() {
+  unawaited(blocker.dispose());
+  unawaited(service.dispose());
+  super.dispose();
+}
+```
+
+El blocker consume los eventos `KeyDownEvent` y `KeyRepeatEvent` del dispositivo seleccionado. Los eventos `KeyUpEvent`, sintetizados o sin un origen nativo reciente pasan a Flutter. Si el dispositivo deja de estar seleccionado, llama a `setBlockedDeviceId(null)`.
 
 ### Listar teclados detectados
 
@@ -107,7 +146,10 @@ En otras plataformas, `isSupported` es `false` y las operaciones nativas lanzan 
 | `listDevices()` | Lista teclados conectados con nombre, fabricante, transporte y atributos separados. |
 | `keyEvents` | Emite cada tecla presionada con su código virtual y ruta de origen. |
 | `barcodeEvents` | Emite el código completo al recibir Enter desde el dispositivo seleccionado. |
-| `configureInputPolicy(policy)` | Solicita suprimir la escritura normal del dispositivo seleccionado y devuelve un resultado tipado. |
+| `configureInputPolicy(policy)` | Selecciona el dispositivo cuyos eventos Raw Input forman códigos de barras y devuelve un resultado tipado. |
+| `ScannerKeyboardInputBlocker(service:)` | Intercepta en Flutter las teclas del dispositivo seleccionado. |
+| `blocker.start()` / `blocker.setBlockedDeviceId(deviceId)` | Registra el handler y actualiza qué teclado se bloquea. |
+| `blocker.stop()` / `blocker.dispose()` | Retira el handler global y libera la suscripción. |
 | `stop()` | Detiene la captura y permite reanudar el servicio. |
 | `dispose()` | Detiene la captura y cierra el stream. |
 
@@ -119,7 +161,7 @@ fvm flutter pub get
 fvm flutter run -d windows
 ```
 
-El ejemplo lista teclados, muestra eventos y rutas de origen, e incluye un campo de texto para comprobar la escritura normal, el filtro por dispositivo y el código completo leído hasta Enter.
+El ejemplo lista teclados, muestra eventos y rutas de origen, e incluye un campo de texto para comprobar el bloqueo selectivo mediante `ScannerKeyboardInputBlocker` y los códigos completos leídos hasta Enter.
 
 ## Arquitectura
 

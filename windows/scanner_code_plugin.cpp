@@ -8,7 +8,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -380,27 +379,26 @@ class ScannerCodePlugin : public flutter::Plugin, public ScannerCodeHostApi {
 
   ErrorOr<ScannerInputPolicyResultData> ConfigureInputPolicy(
       const ScannerInputPolicyData& policy) override {
-    const auto previous_device_path = suppressed_device_path_;
-    suppressed_device_path_ =
+    const auto previous_device_path = barcode_device_path_;
+    barcode_device_path_ =
         policy.device_path() == nullptr ? "" : *policy.device_path();
-    forwarded_keys_.clear();
     barcode_buffers_.clear();
     if (capturing_ && !RegisterKeyboardInput()) {
-      suppressed_device_path_ = previous_device_path;
+      barcode_device_path_ = previous_device_path;
       const std::string message =
-          "Windows could not apply the selected keyboard filter.";
+          "Windows could not select the barcode source.";
       return ScannerInputPolicyResultData(
           ScannerInputPolicyStatusData::kUnsupported, &message);
     }
 
     const std::string message =
-        suppressed_device_path_.empty()
-            ? "No keyboard is selected for suppression."
+        barcode_device_path_.empty()
+            ? "No keyboard is selected as the barcode source."
             : capturing_
-                  ? "Selected keyboard input is suppressed; other keyboards "
-                    "are forwarded."
-                  : "The selected keyboard will be suppressed when capture "
-                    "starts.";
+                  ? "The selected keyboard is monitored for barcodes; normal "
+                    "typing remains enabled."
+                  : "The selected keyboard will be monitored for barcodes "
+                    "when capture starts.";
     return ScannerInputPolicyResultData(ScannerInputPolicyStatusData::kApplied,
                                         &message);
   }
@@ -451,7 +449,6 @@ class ScannerCodePlugin : public flutter::Plugin, public ScannerCodeHostApi {
     delegate_id_ = -1;
     capturing_ = false;
     target_window_ = nullptr;
-    forwarded_keys_.clear();
     barcode_buffers_.clear();
 
     if (!removed) {
@@ -469,75 +466,14 @@ class ScannerCodePlugin : public flutter::Plugin, public ScannerCodeHostApi {
     keyboard.usUsagePage = 0x01;
     keyboard.usUsage = 0x06;
     keyboard.dwFlags = RIDEV_INPUTSINK;
-    if (!suppressed_device_path_.empty()) {
-      // Windows cannot disable legacy typing for only one HID keyboard.
-      // Disable it for this app and forward Raw Input from every other device.
-      keyboard.dwFlags |= RIDEV_NOLEGACY;
-    }
     keyboard.hwndTarget = target_window_;
     return RegisterRawInputDevices(&keyboard, 1, sizeof(keyboard)) != FALSE;
   }
 
-  static std::string ForwardedKeyId(const std::string& device_path,
-                                    const RAWKEYBOARD& key) {
-    return device_path + ":" + std::to_string(key.VKey) + ":" +
-           std::to_string(key.MakeCode) + ":" +
-           std::to_string(key.Flags & (RI_KEY_E0 | RI_KEY_E1));
-  }
-
-  void ForwardKeyboardInput(const DeviceIdentity& identity,
-                            const RAWKEYBOARD& key) {
-    if (suppressed_device_path_.empty() ||
-        identity.path == suppressed_device_path_) {
-      return;
-    }
-
-    const HWND foreground = GetForegroundWindow();
-    if (foreground == nullptr ||
-        GetAncestor(foreground, GA_ROOT) != target_window_) {
-      forwarded_keys_.clear();
-      return;
-    }
-
-    if (key.Message != WM_KEYDOWN && key.Message != WM_KEYUP &&
-        key.Message != WM_SYSKEYDOWN && key.Message != WM_SYSKEYUP) {
-      return;
-    }
-
-    const auto key_id = ForwardedKeyId(identity.path, key);
-    const bool key_up = (key.Flags & RI_KEY_BREAK) != 0;
-    const bool was_down =
-        forwarded_keys_.find(key_id) != forwarded_keys_.end();
-    if (key_up && !was_down) return;
-
-    if (key_up) {
-      forwarded_keys_.erase(key_id);
-    } else {
-      forwarded_keys_.insert(key_id);
-    }
-
-    // Inject into the Windows keyboard stream so the key state queried by
-    // Flutter matches the forwarded event, especially for Ctrl and Alt.
-    INPUT input{};
-    input.type = INPUT_KEYBOARD;
-    input.ki.wVk = 0;
-    input.ki.wScan = key.MakeCode;
-    input.ki.dwFlags = KEYEVENTF_SCANCODE;
-    if ((key.Flags & RI_KEY_E0) != 0) {
-      input.ki.dwFlags |= KEYEVENTF_EXTENDEDKEY;
-    }
-    if (key_up) input.ki.dwFlags |= KEYEVENTF_KEYUP;
-    if (key.MakeCode == 0) {
-      input.ki.wVk = key.VKey;
-      input.ki.dwFlags &= ~KEYEVENTF_SCANCODE;
-    }
-    SendInput(1, &input, sizeof(INPUT));
-  }
-
   void ProcessBarcodeInput(const DeviceIdentity& identity,
                            const RAWKEYBOARD& key) {
-    if (suppressed_device_path_.empty() ||
-        identity.path != suppressed_device_path_) {
+    if (barcode_device_path_.empty() ||
+        identity.path != barcode_device_path_) {
       return;
     }
 
@@ -631,10 +567,6 @@ class ScannerCodePlugin : public flutter::Plugin, public ScannerCodeHostApi {
           if ((key.Flags & RI_KEY_BREAK) == 0) {
             PublishKey(identity, key.VKey);
           }
-          if (key.VKey != 0 && key.VKey != 0xff &&
-              GET_RAWINPUT_CODE_WPARAM(wparam) == RIM_INPUT) {
-            ForwardKeyboardInput(identity, key);
-          }
         }
       }
     }
@@ -657,8 +589,7 @@ class ScannerCodePlugin : public flutter::Plugin, public ScannerCodeHostApi {
   int delegate_id_ = -1;
   HWND target_window_ = nullptr;
   std::string last_device_path_;
-  std::string suppressed_device_path_;
-  std::set<std::string> forwarded_keys_;
+  std::string barcode_device_path_;
   std::map<std::string, BarcodeBuffer> barcode_buffers_;
   bool capturing_ = false;
 };

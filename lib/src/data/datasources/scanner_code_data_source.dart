@@ -14,7 +14,7 @@ abstract interface class ScannerCodeDataSource {
   /// Lists keyboard devices detected by Windows Raw Input.
   Future<List<ScannerDeviceInfo>> listDevices();
 
-  /// Selects a Raw Input device whose legacy text input should be suppressed.
+  /// Selects the Raw Input device whose keystrokes are parsed as barcodes.
   Future<ScannerInputPolicyResultData> configureInputPolicy(
     String? devicePath,
   );
